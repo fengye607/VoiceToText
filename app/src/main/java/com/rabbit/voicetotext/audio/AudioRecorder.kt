@@ -3,11 +3,13 @@ package com.rabbit.voicetotext.audio
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.util.Log
 import java.io.ByteArrayOutputStream
 
 class AudioRecorder {
 
     companion object {
+        private const val TAG = "VoiceToText"
         const val SAMPLE_RATE = 16000
         private const val CHANNEL = AudioFormat.CHANNEL_IN_MONO
         private const val ENCODING = AudioFormat.ENCODING_PCM_16BIT
@@ -19,7 +21,10 @@ class AudioRecorder {
     private var pcmData = ByteArrayOutputStream()
 
     fun startRecording() {
+        Log.i(TAG, "startRecording() called")
         val bufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL, ENCODING)
+        Log.d(TAG, "AudioRecord minBufferSize=$bufferSize, sampleRate=$SAMPLE_RATE")
+
         audioRecord = AudioRecord(
             MediaRecorder.AudioSource.MIC,
             SAMPLE_RATE,
@@ -27,31 +32,48 @@ class AudioRecorder {
             ENCODING,
             bufferSize
         )
+        Log.d(TAG, "AudioRecord created, state=${audioRecord?.state}")
 
         pcmData.reset()
         isRecording = true
         audioRecord?.startRecording()
+        Log.i(TAG, "AudioRecord started recording")
 
         recordingThread = Thread {
             val buffer = ByteArray(bufferSize)
+            var totalRead = 0
             while (isRecording) {
                 val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
                 if (read > 0) {
                     pcmData.write(buffer, 0, read)
+                    totalRead += read
+                } else if (read < 0) {
+                    Log.w(TAG, "AudioRecord.read() returned error: $read")
                 }
             }
+            Log.d(TAG, "Recording thread finished, totalBytesRead=$totalRead")
         }.apply { start() }
+        Log.d(TAG, "Recording thread started")
     }
 
     fun stopRecording(): ByteArray {
+        Log.i(TAG, "stopRecording() called")
         isRecording = false
         recordingThread?.join(1000)
+        Log.d(TAG, "Recording thread joined")
+
         audioRecord?.stop()
+        Log.d(TAG, "AudioRecord stopped")
         audioRecord?.release()
         audioRecord = null
+        Log.d(TAG, "AudioRecord released")
 
         val pcmBytes = pcmData.toByteArray()
-        return pcmToWav(pcmBytes)
+        Log.i(TAG, "PCM data size=${pcmBytes.size} bytes, duration=${pcmBytes.size / (SAMPLE_RATE * 2)}s")
+
+        val wavBytes = pcmToWav(pcmBytes)
+        Log.i(TAG, "WAV data size=${wavBytes.size} bytes")
+        return wavBytes
     }
 
     private fun pcmToWav(pcmBytes: ByteArray): ByteArray {
