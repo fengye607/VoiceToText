@@ -121,19 +121,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val functions = configStore.getFunctions()
                 val matches = douBaoApi.matchFunctions(text, functions, apiKey, model)
 
-                val matchedFunctions = matches.mapNotNull { match ->
+                var matchedFunctions = matches.mapNotNull { match ->
                     val config = functions.find { it.id == match.functionId }
                     config?.let { MatchedFunction(it, match) }
+                }
+
+                // If LLM returned no valid matches, show all functions as options
+                if (matchedFunctions.isEmpty()) {
+                    matchedFunctions = functions.take(3).map { config ->
+                        MatchedFunction(
+                            config = config,
+                            match = FunctionMatch(
+                                functionId = config.id,
+                                confidence = 0.0,
+                                parsedContent = text
+                            )
+                        )
+                    }
                 }
 
                 _uiState.value = _uiState.value.copy(
                     isMatching = false,
                     functionMatches = matchedFunctions
                 )
-
-                if (matchedFunctions.isEmpty()) {
-                    _uiState.value = _uiState.value.copy(error = "未匹配到功能")
-                }
             } catch (e: Exception) {
                 Log.e(TAG, "Processing failed", e)
                 _uiState.value = _uiState.value.copy(
