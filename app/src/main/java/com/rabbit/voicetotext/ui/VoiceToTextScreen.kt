@@ -107,6 +107,11 @@ fun VoiceToTextScreen(
                 .padding(padding),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Show recognized text while LLM is matching
+            if (uiState.isMatching && uiState.recognizedText.isNotBlank()) {
+                RecognizedTextBanner(text = uiState.recognizedText)
+            }
+
             // Function match cards (shown after LLM matching)
             if (uiState.functionMatches.isNotEmpty()) {
                 FunctionMatchSection(
@@ -149,7 +154,7 @@ fun VoiceToTextScreen(
             // Recording area
             RecordingArea(
                 isRecording = uiState.isRecording,
-                isProcessing = uiState.isProcessing || uiState.isMatching || uiState.isExecuting,
+                isProcessing = uiState.isProcessing || uiState.isExecuting,
                 statusText = when {
                     uiState.isRecording -> "松开结束录音"
                     uiState.isProcessing -> "语音识别中..."
@@ -169,6 +174,45 @@ fun VoiceToTextScreen(
                 onStopRecording = { viewModel.stopRecording() }
             )
         }
+    }
+}
+
+@Composable
+private fun RecognizedTextBanner(text: String) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.primaryContainer
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "\"$text\"",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            CircularProgressIndicator(
+                modifier = Modifier.size(20.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+        }
+        Text(
+            "正在分析指令...",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+            modifier = Modifier.padding(start = 16.dp, bottom = 12.dp)
+        )
     }
 }
 
