@@ -124,7 +124,7 @@ fun SettingsScreen(
             OutlinedTextField(
                 value = llmModel,
                 onValueChange = { llmModel = it },
-                label = { Text("模型名称 (如 doubao-seed-2-0-mini-260215)") },
+                label = { Text("模型名称 (如 doubao-seed-1-6-lite-251015)") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )

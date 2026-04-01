@@ -39,7 +39,7 @@ class ConfigStore(private val context: Context) {
     }
 
     suspend fun getLlmModel(): String {
-        return context.dataStore.data.map { it[LLM_MODEL] ?: "doubao-seed-2-0-mini-260215" }.first()
+        return context.dataStore.data.map { it[LLM_MODEL] ?: "doubao-seed-1-6-lite-251015" }.first()
     }
 
     suspend fun setLlmModel(model: String) {

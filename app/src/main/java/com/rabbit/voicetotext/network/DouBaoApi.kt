@@ -20,7 +20,7 @@ class DouBaoApi {
 
     companion object {
         private const val TAG = "VoiceToText"
-        private const val API_URL = "https://ark.cn-beijing.volces.com/api/v3/responses"
+        private const val API_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
     }
 
     private val client = OkHttpClient.Builder()
@@ -60,16 +60,11 @@ $functionList
 
         val requestBody = mapOf(
             "model" to model,
-            "input" to listOf(
-                mapOf(
-                    "role" to "system",
-                    "content" to listOf(mapOf("type" to "input_text", "text" to systemPrompt))
-                ),
-                mapOf(
-                    "role" to "user",
-                    "content" to listOf(mapOf("type" to "input_text", "text" to inputText))
-                )
-            )
+            "messages" to listOf(
+                mapOf("role" to "system", "content" to systemPrompt),
+                mapOf("role" to "user", "content" to inputText)
+            ),
+            "max_completion_tokens" to 256
         )
 
         val json = gson.toJson(requestBody)
@@ -90,13 +85,9 @@ $functionList
             throw Exception("LLM API error ${response.code}: $responseBody")
         }
 
-        // Parse Responses API format
-        val respData = gson.fromJson(responseBody, ResponsesApiResponse::class.java)
-        val content = respData.output
-            ?.firstOrNull { it.type == "message" }
-            ?.content
-            ?.firstOrNull { it.type == "output_text" }
-            ?.text
+        // Parse chat completions response
+        val chatResponse = gson.fromJson(responseBody, ChatCompletionResponse::class.java)
+        val content = chatResponse.choices.firstOrNull()?.message?.content
             ?: throw Exception("LLM returned no content")
 
         Log.i(TAG, "LLM content: $content")
@@ -123,23 +114,20 @@ $functionList
     }
 }
 
-// Responses API response models
-private data class ResponsesApiResponse(
-    val output: List<OutputItem>? = null
-)
-
-private data class OutputItem(
-    val type: String = "",
-    val content: List<ContentItem>? = null
-)
-
-private data class ContentItem(
-    val type: String = "",
-    val text: String? = null
-)
-
 private data class LlmFunctionMatch(
     @SerializedName("function_id") val functionId: String = "",
     val confidence: Double = 0.0,
     @SerializedName("parsed_content") val parsedContent: String = ""
+)
+
+private data class ChatCompletionResponse(
+    val choices: List<Choice> = emptyList()
+)
+
+private data class Choice(
+    val message: Message? = null
+)
+
+private data class Message(
+    val content: String? = null
 )
