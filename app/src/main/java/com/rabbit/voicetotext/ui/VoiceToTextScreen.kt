@@ -1,9 +1,6 @@
 package com.rabbit.voicetotext.ui
 
 import android.Manifest
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.pm.PackageManager
 import android.widget.Toast
 import androidx.compose.animation.core.LinearEasing
@@ -27,13 +24,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -45,6 +44,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -62,13 +62,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.rabbit.voicetotext.data.db.ExecutionRecord
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VoiceToTextScreen(viewModel: MainViewModel) {
+fun VoiceToTextScreen(
+    viewModel: MainViewModel,
+    onOpenSettings: () -> Unit
+) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -83,8 +87,11 @@ fun VoiceToTextScreen(viewModel: MainViewModel) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text("语音转文字", fontWeight = FontWeight.Bold)
+                title = { Text("语音指令", fontWeight = FontWeight.Bold) },
+                actions = {
+                    IconButton(onClick = onOpenSettings) {
+                        Icon(Icons.Filled.Settings, contentDescription = "设置")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -100,6 +107,16 @@ fun VoiceToTextScreen(viewModel: MainViewModel) {
                 .padding(padding),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
+            // Function match cards (shown after LLM matching)
+            if (uiState.functionMatches.isNotEmpty()) {
+                FunctionMatchSection(
+                    recognizedText = uiState.recognizedText,
+                    matches = uiState.functionMatches,
+                    onSelect = { viewModel.executeFunction(it) },
+                    onDismiss = { viewModel.dismissMatches() }
+                )
+            }
+
             // History list
             LazyColumn(
                 modifier = Modifier
@@ -108,10 +125,10 @@ fun VoiceToTextScreen(viewModel: MainViewModel) {
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (uiState.history.isEmpty()) {
+                if (uiState.history.isEmpty() && uiState.functionMatches.isEmpty()) {
                     item {
                         Text(
-                            text = "按住下方按钮开始说话",
+                            text = "按住下方按钮说出指令",
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 100.dp),
@@ -121,16 +138,10 @@ fun VoiceToTextScreen(viewModel: MainViewModel) {
                         )
                     }
                 }
-                itemsIndexed(uiState.history) { index, result ->
-                    ResultCard(
-                        text = result.text,
-                        timestamp = result.timestamp,
-                        onCopy = {
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("识别结果", result.text))
-                            Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
-                        },
-                        onDelete = { viewModel.deleteResult(index) }
+                items(uiState.history, key = { it.id }) { record ->
+                    ExecutionRecordCard(
+                        record = record,
+                        onDelete = { viewModel.deleteRecord(record.id) }
                     )
                 }
             }
@@ -138,7 +149,14 @@ fun VoiceToTextScreen(viewModel: MainViewModel) {
             // Recording area
             RecordingArea(
                 isRecording = uiState.isRecording,
-                isProcessing = uiState.isProcessing,
+                isProcessing = uiState.isProcessing || uiState.isMatching || uiState.isExecuting,
+                statusText = when {
+                    uiState.isRecording -> "松开结束录音"
+                    uiState.isProcessing -> "语音识别中..."
+                    uiState.isMatching -> "分析指令中..."
+                    uiState.isExecuting -> "执行中..."
+                    else -> "按住说话"
+                },
                 onStartRecording = {
                     if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
                         == PackageManager.PERMISSION_GRANTED
@@ -155,9 +173,151 @@ fun VoiceToTextScreen(viewModel: MainViewModel) {
 }
 
 @Composable
+private fun FunctionMatchSection(
+    recognizedText: String,
+    matches: List<MatchedFunction>,
+    onSelect: (MatchedFunction) -> Unit,
+    onDismiss: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "\"$recognizedText\"",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                Icon(Icons.Filled.Close, contentDescription = "取消", modifier = Modifier.size(18.dp))
+            }
+        }
+
+        matches.forEach { matched ->
+            FunctionMatchCard(
+                matched = matched,
+                onSelect = { onSelect(matched) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun FunctionMatchCard(
+    matched: MatchedFunction,
+    onSelect: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        matched.config.name,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "${(matched.match.confidence * 100).toInt()}%",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Text(
+                    matched.match.parsedContent,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
+                )
+            }
+            TextButton(onClick = onSelect) {
+                Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("确认")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExecutionRecordCard(
+    record: ExecutionRecord,
+    onDelete: () -> Unit
+) {
+    val timeStr = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(record.timestamp))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    record.functionName,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (record.success) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.error
+                )
+                Text(
+                    timeStr,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(record.inputText, style = MaterialTheme.typography.bodyMedium)
+            if (record.parsedContent != record.inputText) {
+                Text(
+                    "→ ${record.parsedContent}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        Icons.Filled.Delete,
+                        contentDescription = "删除",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun RecordingArea(
     isRecording: Boolean,
     isProcessing: Boolean,
+    statusText: String,
     onStartRecording: () -> Unit,
     onStopRecording: () -> Unit
 ) {
@@ -174,14 +334,13 @@ fun RecordingArea(
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(12.dp))
-            Text("识别中...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(statusText, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            // Ripple animation when recording
             Box(contentAlignment = Alignment.Center) {
                 if (isRecording) {
                     val infiniteTransition = rememberInfiniteTransition(label = "ripple")
                     for (i in 0..2) {
-                        val scale by infiniteTransition.animateFloat(
+                        val animScale by infiniteTransition.animateFloat(
                             initialValue = 1f,
                             targetValue = 2.5f,
                             animationSpec = infiniteRepeatable(
@@ -202,7 +361,7 @@ fun RecordingArea(
                         Box(
                             modifier = Modifier
                                 .size(72.dp)
-                                .scale(scale)
+                                .scale(animScale)
                                 .background(
                                     MaterialTheme.colorScheme.primary.copy(alpha = alpha),
                                     CircleShape
@@ -211,7 +370,6 @@ fun RecordingArea(
                     }
                 }
 
-                // Mic button
                 Box(
                     modifier = Modifier
                         .size(72.dp)
@@ -242,65 +400,10 @@ fun RecordingArea(
 
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = if (isRecording) "松开结束录音" else "按住说话",
+                text = statusText,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontWeight = FontWeight.Medium
             )
-        }
-    }
-}
-
-@Composable
-fun ResultCard(
-    text: String,
-    timestamp: Long,
-    onCopy: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val timeStr = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timestamp))
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = timeStr,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                )
-                Row {
-                    IconButton(onClick = onCopy, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            Icons.Filled.ContentCopy,
-                            contentDescription = "复制",
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                        Icon(
-                            Icons.Filled.Delete,
-                            contentDescription = "删除",
-                            modifier = Modifier.size(18.dp),
-                            tint = MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            }
         }
     }
 }
